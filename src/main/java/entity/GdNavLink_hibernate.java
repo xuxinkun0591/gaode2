@@ -7,17 +7,13 @@ import javax.persistence.GeneratedValue;
 import javax.persistence.GenerationType;
 import javax.persistence.Id;
 import javax.persistence.Table;
-import javax.persistence.Temporal;
-import javax.persistence.TemporalType;
 
 import com.vividsolutions.jts.geom.Geometry;
 
 /*
 create table gd_nav_traffic(
 seq number(8) ,
-objectid number(8),  --道路源的id,后面可能不用
-objectid2 number(8),
-dept varchar2(32),    -- steps/tmcs
+dept varchar2(32),    -- step/tmc
 tmcid number(8),     -- 第几个tmc
 action varchar2(32),
 distance number(8),
@@ -35,8 +31,6 @@ public class GdNavLink_hibernate {
 	@Id
 	@GeneratedValue(strategy = GenerationType.AUTO)
 	private Long seq;
-	private Long objectid;
-	private Long objectid2;
 	private String dept;
 	private Long tmcid;
 	private String action;
@@ -54,11 +48,9 @@ public class GdNavLink_hibernate {
 		super();
 	}
 	
-	public GdNavLink_hibernate(Long objectid, Long objectid2, String dept, Long tmcid, String action, Long distance,
+	public GdNavLink_hibernate(String dept, Long tmcid, String action, Long distance,
 			Long duration, String orientation, String road, String status, java.sql.Timestamp insertTime, Geometry polyline) {
 		super();
-		this.objectid = objectid;
-		this.objectid2 = objectid2;
 		this.dept = dept;
 		this.tmcid = tmcid;
 		this.action = action;
@@ -79,22 +71,6 @@ public class GdNavLink_hibernate {
 
 	public void setSeq(Long seq) {
 		this.seq = seq;
-	}
-
-	public Long getObjectid() {
-		return objectid;
-	}
-
-	public void setObjectid(Long objectid) {
-		this.objectid = objectid;
-	}
-
-	public Long getObjectid2() {
-		return objectid2;
-	}
-
-	public void setObjectid2(Long objectid2) {
-		this.objectid2 = objectid2;
 	}
 
 	public String getDept() {
