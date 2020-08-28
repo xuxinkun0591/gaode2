@@ -1,3 +1,10 @@
+--------------------- 2020年8月更新-------------------------
+1.增加了多线程访问接口,速度大大提升,开启5个线程时,速度可达每秒十几次.
+2.去掉了junit相关东西,改成了常规了main方法作为入口.
+3.优化代码结构,可读性增强.
+
+------------------------ end -------------------------
+
 利用高德导航接口创建交通路网模型源代码.  
 语言: JAVA  
 项目管理方式: maven  
@@ -10,12 +17,11 @@
 3. 在main/resources/META-INF/persistence.xml中修改数据库连接参数  
 4. 在getHttpReq方法中填入你自己申请的KEY  
 5. SQL部分。在数据库中新建表GD_NAV_POINT和GD_NAV_TRAFFIC,详见“SQL部分.sql”，可以用你自己的方法构造OD点对，也可以参照公众号教程中的操作实例  
-6. 运行gaode2/src/main/java/gaode/GetNav.java 中的runAll方法 （Junit方法运行）  
+6. 运行gaode2/src/main/java/gaode/GetNav.java 中的main方法
 7. SQL部分。回到“SQL部分.sql”， 进行连通性和拓扑性的批量处理。  
 8. 最后在数据库中到出表GD_NAV_TRAFFIC_2， 即为最终路网。  
   
-目前java部分是访问API是单线程, 等有空把多线程版本的修改下也发上来.  
-  
+
 有问题欢迎交流   
 本人邮箱: xuxinkun@189.cn  
 微信: xuxinkun0591  
