@@ -38,7 +38,7 @@ private java.sql.Timestamp insert_time;
 	private static List<Map> links; // 需要导航的OD对
 	private int linkIndex = 0;
 
-	public GetNavTrafficHibernate() {
+	public GetNav() {
 		java.util.Date sysDate = new java.util.Date();
 		insert_time = new java.sql.Timestamp(sysDate.getTime());
 	};
