@@ -1,6 +1,6 @@
 /* 高德导航,获取路况 
  * hibernate版本
- * req示例: 
+ * 请求示例: 
 https://restapi.amap.com/v3/direction/driving?
 origin=119.363306,26.048199
 &destination=119.364579,26.041252
@@ -19,8 +19,6 @@ import java.util.Map;
 
 import org.hibernate.Session;
 import org.hibernate.Transaction;
-import org.hibernate.type.LongType;
-import org.junit.Test;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
@@ -35,26 +33,110 @@ import utils.HttpClientResult;
 import utils.HttpClientUtils;
 import utils.JPAUtil;
 
-public class GetNav {
-	private java.sql.Timestamp insert_time;
+public class GetNav implements Runnable{
+private java.sql.Timestamp insert_time;
+	private static List<Map> links; // 需要导航的OD对
+	private int linkIndex = 0;
 
-	public GetNav() {
+	public GetNavTrafficHibernate() {
 		java.util.Date sysDate = new java.util.Date();
 		insert_time = new java.sql.Timestamp(sysDate.getTime());
 	};
 
+	public static void main(String[] args) throws Exception {
+		GetNavTrafficHibernate gdrun = new GetNavTrafficHibernate();
+
+		int choose = 2;
+
+		if (choose == 1) // 单线程
+			gdrun.runSingle();
+		if (choose == 2) // 多线程
+			gdrun.runMul(gdrun);
+
+		JPAUtil.close();
+		System.out.println("main end..");
+	}
+
+	// 多线程接口方法run实现
+	public void run() {
+		Session session = JPAUtil.getSession();
+		Transaction tx = session.beginTransaction();
+		Map link = new HashMap();
+		int linkCnt = 0;
+
+		while (true) {
+			synchronized (this) {
+				if (linkIndex < links.size()) {
+					link = links.get(linkIndex);
+					linkIndex++;
+					System.out.println("get request: " + linkIndex + "/" + links.size());
+				} else {
+					break;
+				}
+			}
+			// 发送http请求
+			String content = getHttpReq(link);
+			if (content == null)
+				continue;
+			link.put("content", content);
+			// 解析返回的内容
+			List<GdNavLink_hibernate> parseList = null;
+			try {
+				parseList = parseJson(link);
+			} catch (ParseException e) {
+				e.printStackTrace();
+			}
+			if (parseList == null)
+				continue;
+			// 保存step和tmc
+			for (GdNavLink_hibernate gdNavLink : parseList) {
+				session.save(gdNavLink);
+			}
+
+			if (++linkCnt % 100 == 0) { // 每N次访问刷新并写入数据库
+				session.flush();
+				session.clear();
+				tx.commit();
+				tx = session.beginTransaction();
+			}
+		}
+		session.flush();
+		tx.commit();
+		session.close();
+	}
+
+	// 运行--多线程
+	public void runMul(GetNavTrafficHibernate mulThread) throws InterruptedException {
+		// 获取所有request
+		links = getLinks();
+		Thread t1 = new Thread(mulThread);
+		Thread t2 = new Thread(mulThread);
+		Thread t3 = new Thread(mulThread);
+		Thread t4 = new Thread(mulThread);
+		Thread t5 = new Thread(mulThread);
+		t1.start();
+		t2.start();
+		t3.start();
+		t4.start();
+		t5.start();
+		t1.join();
+		t2.join();
+		t3.join();
+		t4.join();
+		t5.join();
+	}
+
 	// 运行--单线程
-	@Test
-	public void runAll() throws Exception {
+	public void runSingle() throws Exception {
 		Session session = JPAUtil.getSession();
 		Transaction tx = session.beginTransaction();
 
 		// 获取所有request
-		List<Map> links = getLinks(session);
+		links = getLinks();
 		// 逐条处理: 发送请求/解析/保存
 		for (int i = 0; i < links.size(); i++) {
 			Map<String, Object> link = links.get(i);
-			System.out.println("get response:" + (i + 1) + "/" + links.size() );
+			System.out.println("get response:" + (i + 1) + "/" + links.size());
 			// 发送http请求
 			String content = getHttpReq(link);
 			if (content == null)
@@ -75,25 +157,21 @@ public class GetNav {
 		}
 		tx.commit();
 		session.close();
-		System.out.println("完成..");
 	}
 
-	// 1获取索引道路源
-	public List<Map> getLinks(Session session) {
-		List<Object[]> objects = session.createSQLQuery("SELECT * FROM V_GD_NAV_POINT")
-				.addScalar("objectid", LongType.INSTANCE).addScalar("objectid2", LongType.INSTANCE).addScalar("s")
-				.addScalar("e").addScalar("m").list();
+	// 1获取导航OD对
+	public static List<Map> getLinks() {
+		Session session = JPAUtil.getSession();
+		List<Object[]> objects = session.createSQLQuery("SELECT * FROM V_GD_NAV_POINT").addScalar("s").addScalar("e").list();
 		session.clear();
+		session.close();
 
 		Map<String, Object> map = new HashMap<String, Object>();
 		List<Map> linkList = new ArrayList<Map>();
 		for (Object[] obj : objects) {
 			map = new HashMap<String, Object>();
-			map.put("OBJECTID", obj[0]);
-			map.put("OBJECTID2", obj[1]);
-			map.put("S", obj[2]);
-			map.put("E", obj[3]);
-			map.put("M", obj[4]);
+			map.put("S", obj[0]);
+			map.put("E", obj[1]);
 			linkList.add(map);
 		}
 		System.out.println("待解析的OD数: " + linkList.size());
@@ -104,12 +182,12 @@ public class GetNav {
 	public String getHttpReq(Map<String, Object> map) {
 		String url = "https://restapi.amap.com/v3/direction/driving";
 		Map<String, String> params = new HashMap<String, String>();
-		params.put("key", "你自己的key"); /* 在前面填入你自己申请的key */
+		params.put("key", "你的key"); 
 		params.put("extensions", "all");
-		params.put("strategy", "10");
+		params.put("strategy", "10"); //10默认多路径;2单路径,距离最短
 		params.put("origin", (String) map.get("S"));
 		params.put("destination", (String) map.get("E"));
-
+		
 		HttpClientResult result;
 		try {
 			result = HttpClientUtils.doGet(url, params);
@@ -195,20 +273,18 @@ public class GetNav {
 					geom = fromText.read("LINESTRING(" + polyline + ")");
 					geom.setSRID(4326);
 				}
-				singleLink = new GdNavLink_hibernate((Long) linkContent.get("OBJECTID"),
-						(Long) linkContent.get("OBJECTID2"), "step", (Long) tmcid, action, (Long) distance,
-						(Long) duration, orientation, road, linkStatus, insert_time, geom);
+				singleLink = new GdNavLink_hibernate("step", (Long) tmcid, action, (Long) distance, (Long) duration,
+						orientation, road, linkStatus, insert_time, geom);
 				list.add(singleLink);
 				stepList.add(singleLink);
 
 				// 循环处理tmcs
 				JsonArray tmcs = step.get("tmcs").getAsJsonArray();
+				// System.out.print(tmcs.size() + ",");
 				for (int j = 0; j < tmcs.size(); j++) {
-					// 第一个step的第一个tmc忽略
 					if (i == 0 && j == 0) {
 						continue;
 					}
-					// 最后一个step的最后一个tmc忽略
 					if (i == (steps.size() - 1) && j == (tmcs.size() - 1)) {
 						continue;
 					}
@@ -233,8 +309,7 @@ public class GetNav {
 						geom = fromText.read("LINESTRING(" + polyline + ")");
 						geom.setSRID(4326);
 					}
-					singleLink = new GdNavLink_hibernate((Long) linkContent.get("OBJECTID"),
-							(Long) linkContent.get("OBJECTID2"), "tmc", tmcid, action, distance, -1L, orientation, road,
+					singleLink = new GdNavLink_hibernate("tmc", tmcid, action, distance, -1L, orientation, road,
 							linkStatus, insert_time, geom);
 					list.add(singleLink);
 				}
@@ -252,14 +327,12 @@ public class GetNav {
 				WKTReader fromText = new WKTReader();
 				Geometry geom = fromText.read("LINESTRING(" + addLine + ")");
 				geom.setSRID(4326);
-				list.add(new GdNavLink_hibernate(stepList.get(i).getObjectid(), stepList.get(i).getObjectid2(), "tmc",
-						-1L, "手动补线", -1L, -1L, stepList.get(i).getOrientation(), stepList.get(i).getRoad(), "",
-						insert_time, geom));
+				list.add(new GdNavLink_hibernate("tmc", -1L, "手动补线", -1L, -1L, stepList.get(i).getOrientation(),
+						stepList.get(i).getRoad(), "", insert_time, geom));
 			}
 
 		}
-
 		return list;
 	}
-
+	
 }
