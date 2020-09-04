@@ -36,7 +36,7 @@ import utils.JPAUtil;
 public class GetNav implements Runnable{
 private java.sql.Timestamp insert_time;
 	private static List<Map> links; // 需要导航的OD对
-	private int linkIndex = 0; // hehe
+	private int linkIndex = 0; // branch1
 
 	public GetNav() {
 		java.util.Date sysDate = new java.util.Date();
