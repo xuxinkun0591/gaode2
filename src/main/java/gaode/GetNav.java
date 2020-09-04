@@ -35,7 +35,7 @@ import utils.JPAUtil;
 
 public class GetNav implements Runnable{
 private java.sql.Timestamp insert_time;
-	private static List<Map> links; // 需要导航的OD对
+	private static List<Map> links; // 需要导航的OD对..
 	private int linkIndex = 0;
 
 	public GetNav() {
@@ -44,7 +44,7 @@ private java.sql.Timestamp insert_time;
 	};
 
 	public static void main(String[] args) throws Exception {
-		GetNavTrafficHibernate gdrun = new GetNavTrafficHibernate();
+		GetNav gdrun = new GetNav();
 
 		int choose = 2;
 
@@ -106,7 +106,7 @@ private java.sql.Timestamp insert_time;
 	}
 
 	// 运行--多线程
-	public void runMul(GetNavTrafficHibernate mulThread) throws InterruptedException {
+	public void runMul(GetNav mulThread) throws InterruptedException {
 		// 获取所有request
 		links = getLinks();
 		Thread t1 = new Thread(mulThread);
