@@ -11,6 +11,7 @@
 
 		<!-- 在这里放入需要托管的entity -->
 		<class>entity.GdNavLink_hibernate</class>
+		<class>entity.GdNavLinkNJ</class>
 		<exclude-unlisted-classes>true</exclude-unlisted-classes>
 
 		<properties>
