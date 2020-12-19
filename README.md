@@ -10,7 +10,7 @@
 --------------------- 2020年1月更新-------------------------    
 功能二:  
 利用高德路径规划接口获取路网  
-    核心代码: 
+    核心代码:  
     src/main/entity/GdNavLink_hibernate.java  
     src/main/gaode/GetNavTrafficHibernate.java  
     "SQL部分.sql"  
