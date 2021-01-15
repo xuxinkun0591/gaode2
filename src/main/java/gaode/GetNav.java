@@ -105,7 +105,7 @@ private java.sql.Timestamp insert_time;
 		session.close();
 	}
 
-	// 运行--多线程
+	// 运行--开了5个线程
 	public void runMul(GetNav mulThread) throws InterruptedException {
 		// 获取所有request
 		links = getLinks();
@@ -226,15 +226,17 @@ private java.sql.Timestamp insert_time;
 		}
 		// 有效导航,开始处理
 		String orientation, road, action, polyline, linkStatus;
-		Long tmcid, distance, duration;
+		Long tmcid, distance, duration,speed;
 		GdNavLink_hibernate singleLink;
 		List<GdNavLink_hibernate> list = new ArrayList<GdNavLink_hibernate>();
 
 		JsonArray paths = obj.get("route").getAsJsonObject().get("paths").getAsJsonArray();
+		// System.out.print("paths:" + paths.size() + "; ");
 		// 逐一处理paths (paths即为多个方案, 每个方案中有多个steps)
 		for (int pid = 0; pid < paths.size(); pid++) {
 			List<GdNavLink_hibernate> stepList = new ArrayList<GdNavLink_hibernate>();
 			JsonArray steps = paths.get(pid).getAsJsonObject().get("steps").getAsJsonArray();
+			// System.out.print("steps:" + steps.size() + "; tmcs:");
 			// 逐一处理steps
 			for (int i = 0; i < steps.size(); i++) {
 				orientation = "";
@@ -247,6 +249,7 @@ private java.sql.Timestamp insert_time;
 				tmcid = 0L;
 				distance = -1L;
 				duration = -1L;
+				speed = -1L;
 
 				JsonObject step = steps.get(i).getAsJsonObject();
 				if (step.get("orientation") != null) {
@@ -259,11 +262,10 @@ private java.sql.Timestamp insert_time;
 					if (!step.get("action").isJsonArray())
 						action = step.get("action").getAsString();
 				}
-				if (step.get("distance") != null) {
+				if (step.get("distance") != null && step.get("duration") != null) {
 					distance = step.get("distance").getAsLong();
-				}
-				if (step.get("duration") != null) {
 					duration = step.get("duration").getAsLong();
+					speed = new Double(distance*3.6/duration).longValue();
 				}
 				if (step.get("polyline") != null) {
 					polyline = step.get("polyline").getAsString();
@@ -273,8 +275,7 @@ private java.sql.Timestamp insert_time;
 					geom = fromText.read("LINESTRING(" + polyline + ")");
 					geom.setSRID(4326);
 				}
-				singleLink = new GdNavLink_hibernate("step", (Long) tmcid, action, (Long) distance, (Long) duration,
-						orientation, road, linkStatus, insert_time, geom);
+				singleLink = new GdNavLink_hibernate("step", (Long) tmcid, action, (Long) distance, (Long) duration,speed,orientation, road, linkStatus, insert_time, geom);
 				list.add(singleLink);
 				stepList.add(singleLink);
 
@@ -282,12 +283,16 @@ private java.sql.Timestamp insert_time;
 				JsonArray tmcs = step.get("tmcs").getAsJsonArray();
 				// System.out.print(tmcs.size() + ",");
 				for (int j = 0; j < tmcs.size(); j++) {
+					
+					// 第一个step的第一个tmc忽略
 					if (i == 0 && j == 0) {
 						continue;
 					}
+					// 最后一个step的最后一个tmc忽略
 					if (i == (steps.size() - 1) && j == (tmcs.size() - 1)) {
 						continue;
 					}
+					
 					tmcid++;
 					distance = -1L;
 					linkStatus = "";
@@ -309,7 +314,8 @@ private java.sql.Timestamp insert_time;
 						geom = fromText.read("LINESTRING(" + polyline + ")");
 						geom.setSRID(4326);
 					}
-					singleLink = new GdNavLink_hibernate("tmc", tmcid, action, distance, -1L, orientation, road,
+					//速度直接取step的速度,当step较长时,tmc的速度误差大
+					singleLink = new GdNavLink_hibernate("tmc", tmcid, action, distance, -1L,speed, orientation, road,
 							linkStatus, insert_time, geom);
 					list.add(singleLink);
 				}
@@ -327,12 +333,13 @@ private java.sql.Timestamp insert_time;
 				WKTReader fromText = new WKTReader();
 				Geometry geom = fromText.read("LINESTRING(" + addLine + ")");
 				geom.setSRID(4326);
-				list.add(new GdNavLink_hibernate("tmc", -1L, "手动补线", -1L, -1L, stepList.get(i).getOrientation(),
+				list.add(new GdNavLink_hibernate("tmc", -1L, "手动补线", -1L, -1L, -1L, stepList.get(i).getOrientation(),
 						stepList.get(i).getRoad(), "", insert_time, geom));
 			}
 
 		}
 		return list;
 	}
+
 	
 }
