@@ -12,7 +12,7 @@
 利用高德路径规划接口获取路网  
     核心代码:  
     src/main/entity/GdNavLink_hibernate.java  
-    src/main/gaode/GetNavTrafficHibernate.java  
+    src/main/gaode/GetNav.java  
     "SQL部分.sql"  
 ------------------------ end -------------------------  
   
