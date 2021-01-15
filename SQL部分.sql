@@ -1,3 +1,18 @@
+/* 规律总结: 
+1.在信号灯左转处,没有左转弧线,道路会缺失;在非信号灯双向路左转处,有时候会断开,有时候不会
+2.在部分掉头处,导航路径(道路)会缺失
+3.连续间隔15分钟访问某tmc,获得step的速度,速度会一直变.
+4.最靠近交叉口的tmc速度一天到晚都很低,应该是考虑了信号灯等待时间.
+5.有一些小路高德路况为"未知",在官方地图上也未显示,这些小路的速度(路程/时间)会给出一个相对固定的值(比如9km/h)
+6.一个请求的不同step有时候会断开(tmc不会断开),java中已将断开的手动补线,包括
+++    向右前方行驶
+++    向左后方行驶
+++    向左前方行驶
+++    右转
+++    左转     还需要在交叉口设置禁止走三角形的两边实现左转
+++    左转调头   
+*/
+
 /* 第一步 */
 --1.1 创建OD点对表, 用于设置导航起终点, 该表可直接在ArcMap中编辑
 -- DROP TABLE "XXK"."GD_NAV_POINT" ;
@@ -24,13 +39,12 @@ SELECT * FROM v_gd_nav_point;
 -- drop table GD_NAV_TRAFFIC;
 create table GD_NAV_TRAFFIC(
 seq number(8) ,
-objectid number(8),  
-objectid2 number(8), 
 dept varchar2(32),    -- step/tmc
 tmcid number(8),     -- 第几个tmc
 action varchar2(32),
 distance number(8),
 duration number(8),
+speed number(4),
 orientation varchar2(64),
 road varchar2(128),
 status varchar2(32),
@@ -38,19 +52,27 @@ insert_time date,
 polyline sdo_geometry
 );
 -- 创建空间索引
-INSERT INTO user_sdo_geom_metadata(TABLE_NAME,COLUMN_NAME,DIMINFO,SRID)
-	VALUES ('GD_NAV_TRAFFIC','polyline',SDO_DIM_ARRAY(SDO_DIM_ELEMENT('X', -180, 180, 0.05),SDO_DIM_ELEMENT('Y', -90, 90, 0.05)),4326);
-CREATE INDEX IDX_GD_NAV_TRAFFIC ON GD_NAV_TRAFFIC(polyline) INDEXTYPE IS MDSYS.SPATIAL_INDEX;
+DELETE FROM user_sdo_geom_metadata WHERE TABLE_NAME = UPPER('GD_NAV_TRAFFIC'); --删除注册
+INSERT INTO user_sdo_geom_metadata (TABLE_NAME,COLUMN_NAME,DIMINFO,SRID) VALUES ('GD_NAV_TRAFFIC','POLYLINE',SDO_DIM_ARRAY(SDO_DIM_ELEMENT('X', -180, 180, 0.05),SDO_DIM_ELEMENT('Y', -90, 90, 0.05)),4326) ; --添加注册
+DROP INDEX IDX_GD_NAV_TRAFFIC;  --删除索引
+CREATE INDEX IDX_GD_NAV_TRAFFIC ON GD_NAV_TRAFFIC(POLYLINE) INDEXTYPE IS MDSYS.SPATIAL_INDEX;  --新建索引
 
 -------------------------------------------- 执行完以上两部即可运行java runAll方法了-------------------------------------
-
+-- 首次删除: 重合的线条  简约去重,首尾点相同即认为重复
+DELETE FROM GD_NAV_TRAFFIC WHERE SEQ IN 
+(SELECT SEQ FROM  
+(SELECT AA.SEQ, ROW_NUMBER() OVER (PARTITION BY BB.X || BB.Y, CC.X || CC.Y ORDER BY SEQ) RN  
+FROM GD_NAV_TRAFFIC AA,table(SDO_UTIL.GETVERTICES(AA.POLYLINE)) BB, table(SDO_UTIL.GETVERTICES(AA.POLYLINE)) CC
+WHERE AA.DEPT = 'tmc' AND BB.ID=1 AND CC.ID=SDO_UTIL.GETNUMVERTICES (AA.POLYLINE))
+WHERE RN>1 GROUP BY SEQ)
+;
 
 
 
 
 
 -- 第三步, 对获取的原始路段进行连通性和拓扑处理
--- 3.1 创建中间表, 补充所需字段
+-- 3.1 创建中间表, 增加字段: 长度/第一个点/第二个点/顶点数
 -- DROP TABLE GD_NAV_TRAFFIC_2;
 CREATE TABLE GD_NAV_TRAFFIC_2 AS
 with
@@ -67,11 +89,15 @@ ROUND(SDO_GEOM.SDO_LENGTH(aa.POLYLINE,0.05,'UNIT=METER'),3) lng,  --长度
 SDO_UTIL.GETNUMVERTICES (AA.POLYLINE) NUMVER,   --顶点数
 P.P1,P.P2     -- 第一个点/第二个点
 FROM GD_NAV_TRAFFIC AA,P
-WHERE AA.SEQ = P.SEQ AND AA.DEPT <> 'step'
+WHERE AA.SEQ = P.SEQ AND AA.DEPT = 'tmc'
 ;
-CALL SDOINDEX('GD_NAV_TRAFFIC_2','POLYLINE');
+DELETE FROM user_sdo_geom_metadata WHERE TABLE_NAME = UPPER('GD_NAV_TRAFFIC_2'); --删除注册
+INSERT INTO user_sdo_geom_metadata (TABLE_NAME,COLUMN_NAME,DIMINFO,SRID) VALUES ('GD_NAV_TRAFFIC_2','POLYLINE',SDO_DIM_ARRAY(SDO_DIM_ELEMENT('X', -180, 180, 0.05),SDO_DIM_ELEMENT('Y', -90, 90, 0.05)),4326) ; --添加注册
+DROP INDEX IDX_GD_NAV_TRAFFIC_2;  --删除索引
+CREATE INDEX IDX_GD_NAV_TRAFFIC_2 ON GD_NAV_TRAFFIC_2(POLYLINE) INDEXTYPE IS MDSYS.SPATIAL_INDEX;  --新建索引
 
 
+															     
 /* 处理1: 信号交叉口(左转和直行,长的(直行)完全覆盖短的(左转),起点相同) */
 -- 1.1 COVERS临时表,筛选covers清单数据.使用covers索引,不然速度很慢
 DROP TABLE TMP_COVERS;
@@ -87,6 +113,8 @@ AND SDO_UTIL.GETNUMVERTICES(SDO_GEOM.SDO_DIFFERENCE(A.POLYLINE,B.POLYLINE,0.05))
 SELECT * FROM T1 WHERE RN = 1
 ;
 -- 1.2: 处理交叉口直行与左转直线的重叠关系:把长的更新为长的比短的多的部分.
+    -- 条件: 1满足covers关系;2起点相同,终点不同;3裁剪段line的顶点为2;4裁剪不唯一时,取x小或者y小进行裁剪
+    -- 切割更新后,oracle随机产生反转,需要处理反转的线 
 -- a 切割更新
 UPDATE GD_NAV_TRAFFIC_2 A SET A.POLYLINE = 
     (SELECT SDO_GEOM.SDO_DIFFERENCE(A.polyline,B.polyline,0.05)
@@ -97,7 +125,8 @@ UPDATE GD_NAV_TRAFFIC_2 M SET M.POLYLINE = SDO_UTIL.REVERSE_LINESTRING(M.POLYLIN
 WHERE EXISTS (SELECT 1 FROM (SELECT AA.SEQ,CC.X,CC.Y FROM GD_NAV_TRAFFIC_2 AA,TABLE(SDO_UTIL.GETVERTICES(AA.POLYLINE)) CC
                              WHERE CC.ID=SDO_UTIL.GETNUMVERTICES (AA.POLYLINE) AND EXISTS(SELECT 1 FROM TMP_COVERS BB WHERE AA.SEQ = BB.LSEQ )) N 
               WHERE M.SEQ = N.SEQ AND (M.P2.SDO_POINT.X<>N.X OR M.P2.SDO_POINT.Y<>N.Y));
--- c 手动调头
+-- c 手动调头. 认为a中切割部分(交叉口直行与左转直线的重叠)是可以掉头的,插入切割部分反转线,为其它方向提供调头车道
+   -- 1取切割完成后的路段;2与其它路网touch的数目必须>=5才认为是交叉口(经大量观察); 3此步骤会产生大量重复线,需再清理一下重复线
 INSERT INTO GD_NAV_TRAFFIC_2 
 WITH
     CUT AS
@@ -105,14 +134,14 @@ WITH
     FIT_SEQ AS
 (SELECT /*+ ORDERED */ A.SEQ FROM CUT A,GD_NAV_TRAFFIC_2 B
  WHERE SDO_TOUCH(B.POLYLINE,A.POLYLINE) = 'TRUE' GROUP BY A.SEQ HAVING COUNT(DISTINCT B.SEQ) >= 5)
-SELECT SEQ_GD_NAV_TRAFFIC.nextval SEQ,OBJECTID,OBJECTID2,'tmc' DEPT,-1 tmcid,'手动调头' ACTION,-1 DISTANCE,-1 DURATION,NULL ORIENTATION,
+SELECT SEQ_GD_NAV_TRAFFIC.nextval SEQ,'tmc' DEPT,-1 tmcid,'手动调头' ACTION,-1 DISTANCE,-1 DURATION,-1 SPEED,NULL ORIENTATION,
        ROAD,NULL STATUS,INSERT_TIME,SDO_UTIL.REVERSE_LINESTRING(A.POLYLINE) POLYLINE,NULL LNG,NULL NUMVER,NULL P1,NULL P2
 FROM GD_NAV_TRAFFIC_2 A WHERE A.SEQ IN (SELECT SEQ FROM FIT_SEQ)
 ;
 -- 1.3: 删除重合的线条. 简约去重,首尾点相同即认为重复
 DELETE FROM GD_NAV_TRAFFIC_2 WHERE SEQ IN(
 SELECT SEQ FROM  
-(SELECT AA.SEQ, ROW_NUMBER() OVER (PARTITION BY BB.X ||','|| BB.Y, CC.X ||','|| CC.Y ORDER BY SEQ) RN  
+(SELECT AA.SEQ, ROW_NUMBER() OVER (PARTITION BY BB.X || BB.Y, CC.X || CC.Y ORDER BY SEQ) RN  
 FROM GD_NAV_TRAFFIC_2 AA,table(SDO_UTIL.GETVERTICES(AA.POLYLINE)) BB, table(SDO_UTIL.GETVERTICES(AA.POLYLINE)) CC
 WHERE BB.ID=1 AND CC.ID=SDO_UTIL.GETNUMVERTICES (AA.POLYLINE))
 WHERE RN>1 GROUP BY SEQ)
@@ -125,124 +154,17 @@ UPDATE GD_NAV_TRAFFIC_2 M SET (M.LNG,M.NUMVER,M.P1,M.P2) = (
     FROM GD_NAV_TRAFFIC_2 AA, table(SDO_UTIL.GETVERTICES(AA.POLYLINE)) BB,table(SDO_UTIL.GETVERTICES(AA.POLYLINE)) CC
     WHERE BB.ID = 1 AND CC.ID = SDO_UTIL.GETNUMVERTICES (AA.POLYLINE) AND M.SEQ = AA.SEQ
 );
-
-/* 处理2: 聚合polyine相邻起终点
--- 2.1 创建对比表
-CREATE TABLE TMP_ADJUSTPOINT
-(	"SEQ" NUMBER(8,0), 
-    "SEQ2" NUMBER(8,0), 
-	"POLYLINE" "MDSYS"."SDO_GEOMETRY" , 
-	"POLYLINE2" "MDSYS"."SDO_GEOMETRY" , 
-	"PA" "MDSYS"."SDO_GEOMETRY" , 
-	"PB" "MDSYS"."SDO_GEOMETRY");
-*/
--- 2.2 开始合并
-/
-DECLARE 
-    ord MDSYS.SDO_ORDINATE_ARRAY := MDSYS.SDO_ORDINATE_ARRAY();
-    ori_line MDSYS.SDO_ORDINATE_ARRAY := MDSYS.SDO_ORDINATE_ARRAY();
-    tmp_cnt NUMBER:=0;
-    CURSOR CUR IS SELECT * FROM TMP_ADJUSTPOINT;
-BEGIN
--- 合并起点
-    SDOINDEX('GD_NAV_TRAFFIC_2','P1');
-LOOP
-    EXECUTE IMMEDIATE 'TRUNCATE TABLE TMP_ADJUSTPOINT';
-    INSERT INTO TMP_ADJUSTPOINT
-        SELECT A.SEQ,B.SEQ SEQ2,A.POLYLINE,B.POLYLINE POLYLINE2,A.P1 PA,B.P1 PB
-        FROM GD_NAV_TRAFFIC_2 A, GD_NAV_TRAFFIC_2 B 
-        WHERE SDO_WITHIN_DISTANCE(B.P1,A.P1,'DISTANCE=1 unit=Meter')='TRUE' AND SDO_EQUAL(B.P1,A.P1) != 'TRUE' 
-        AND /*A.SEQ < B.SEQ*/ 
-        (  (A.P1.SDO_POINT.X < B.P1.SDO_POINT.X ) OR
-           (A.P1.SDO_POINT.X = B.P1.SDO_POINT.X AND A.P1.SDO_POINT.Y<B.P1.SDO_POINT.Y)
-         );
-    COMMIT;
-    SELECT COUNT(1) INTO tmp_cnt FROM TMP_ADJUSTPOINT;
-
-    FOR CUR_RECORD IN CUR LOOP
-        ORD.DELETE();
-        ori_line := CUR_RECORD.POLYLINE2.sdo_ordinates;
-        FOR i IN 1..ori_line.COUNT()
-        LOOP 
-            IF i=1 THEN 
-                ORD.EXTEND();
-                ORD(ORD.last) := CUR_RECORD.PA.sdo_point.X;
-                CONTINUE;
-            END IF;
-            IF i=2 THEN 
-                ORD.EXTEND();
-                ORD(ORD.last) := CUR_RECORD.PA.sdo_point.Y;
-                CONTINUE;
-            END IF;
-            ORD.EXTEND();
-            ORD(ORD.last) := ori_line(i);   
-        END LOOP;
-        UPDATE GD_NAV_TRAFFIC_2 SET 
-            POLYLINE = SDO_GEOMETRY(2002, 4326,NULL,SDO_ELEM_INFO_ARRAY(1,2,1),ORD),P1 = CUR_RECORD.PA
-        WHERE SEQ = CUR_RECORD.SEQ2;
-    END LOOP;
-    COMMIT;
-    DBMS_OUTPUT.PUT_LINE('处理起点seq数量:'||tmp_cnt);
-EXIT WHEN tmp_cnt = 0;
-END LOOP;
---合并终点
-    SDOINDEX('GD_NAV_TRAFFIC_2','P2');
-LOOP
-    EXECUTE IMMEDIATE 'TRUNCATE TABLE TMP_ADJUSTPOINT';
-    INSERT INTO TMP_ADJUSTPOINT
-        SELECT A.SEQ,B.SEQ SEQ2,A.POLYLINE,B.POLYLINE POLYLINE2,A.P2 PA,B.P2 PB
-        FROM GD_NAV_TRAFFIC_2 A, GD_NAV_TRAFFIC_2 B 
-        WHERE SDO_WITHIN_DISTANCE(B.P2,A.P2,'DISTANCE=1 unit=Meter')='TRUE' AND SDO_EQUAL(B.P2,A.P2) != 'TRUE' 
-        AND /*A.SEQ < B.SEQ*/ 
-        (  (A.P2.SDO_POINT.X < B.P2.SDO_POINT.X ) OR
-           (A.P2.SDO_POINT.X = B.P2.SDO_POINT.X AND A.P2.SDO_POINT.Y<B.P2.SDO_POINT.Y)
-         );
-    COMMIT;
-    SELECT COUNT(1) INTO tmp_cnt FROM TMP_ADJUSTPOINT;
-
-    FOR CUR_RECORD IN CUR LOOP
-        ORD.DELETE();
-        ori_line := CUR_RECORD.POLYLINE2.sdo_ordinates;
-        FOR i IN 1..ori_line.COUNT()
-        LOOP 
-            IF i= (ori_line.COUNT()-1) THEN 
-                ORD.EXTEND();
-                ORD(ORD.last) := CUR_RECORD.PA.sdo_point.X;
-                CONTINUE;
-            END IF;
-            IF i= ori_line.COUNT() THEN 
-                ORD.EXTEND();
-                ORD(ORD.last) := CUR_RECORD.PA.sdo_point.Y;
-                CONTINUE;
-            END IF;
-            ORD.EXTEND();
-            ORD(ORD.last) := ori_line(i);   
-        END LOOP;
-        UPDATE GD_NAV_TRAFFIC_2 SET 
-            POLYLINE = SDO_GEOMETRY(2002, 4326,NULL,SDO_ELEM_INFO_ARRAY(1,2,1),ORD),P2 = CUR_RECORD.PA
-        WHERE SEQ = CUR_RECORD.SEQ2;
-    END LOOP;
-    COMMIT;
-    DBMS_OUTPUT.PUT_LINE('处理终点seq数量:'||tmp_cnt);
-EXIT WHEN tmp_cnt = 0;
-END LOOP;
-    SDOINDEX('GD_NAV_TRAFFIC_2','POLYLINE');
-END;
-/
--- 2.3: 删除重合的线条. 简约去重,首尾点相同即认为重复
-DELETE FROM GD_NAV_TRAFFIC_2 WHERE SEQ IN(
-SELECT SEQ FROM  
-(SELECT AA.SEQ, ROW_NUMBER() OVER (PARTITION BY BB.X ||','|| BB.Y, CC.X ||','|| CC.Y ORDER BY SEQ) RN  
-FROM GD_NAV_TRAFFIC_2 AA,table(SDO_UTIL.GETVERTICES(AA.POLYLINE)) BB, table(SDO_UTIL.GETVERTICES(AA.POLYLINE)) CC
-WHERE BB.ID=1 AND CC.ID=SDO_UTIL.GETNUMVERTICES (AA.POLYLINE))
-WHERE RN>1 GROUP BY SEQ)
-;
--- 2.4: 更新双向道路线形至相同. 首尾点交叉相同,且不满足equal关系
+-- 1.5: 更新双向道路线形至相同. 首尾点交叉相同,且不满足equal关系
 DROP TABLE TMP_EQUAL;
 CREATE TABLE TMP_EQUAL AS
 SELECT /*+ ORDERED */ B.SEQ,SDO_UTIL.REVERSE_LINESTRING(A.POLYLINE) POLYLINE
 FROM GD_NAV_TRAFFIC_2 A,GD_NAV_TRAFFIC_2 B
 WHERE A.P1.SDO_POINT.X = B.P2.SDO_POINT.X AND A.P1.SDO_POINT.Y = B.P2.SDO_POINT.Y AND A.P2.SDO_POINT.X = B.P1.SDO_POINT.X AND A.P2.SDO_POINT.Y = B.P1.SDO_POINT.Y
-AND A.SEQ<B.SEQ AND SDO_EQUAL(B.POLYLINE,A.POLYLINE) <> 'TRUE';
-UPDATE GD_NAV_TRAFFIC_2 M SET M.POLYLINE = (SELECT B.POLYLINE FROM TMP_EQUAL B WHERE M.SEQ = B.SEQ) WHERE EXISTS (SELECT 1 FROM TMP_EQUAL B WHERE M.SEQ = B.SEQ)
+AND A.SEQ<B.SEQ AND SDO_EQUAL(B.POLYLINE,A.POLYLINE) <> 'TRUE'
 ;
+UPDATE GD_NAV_TRAFFIC_2 M SET M.POLYLINE = (SELECT B.POLYLINE FROM TMP_EQUAL B WHERE M.SEQ = B.SEQ) WHERE EXISTS (SELECT 1 FROM TMP_EQUAL B WHERE M.SEQ = B.SEQ);										
+										
+										
+										
+										
+										
