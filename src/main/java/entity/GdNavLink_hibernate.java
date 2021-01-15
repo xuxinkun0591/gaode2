@@ -18,6 +18,7 @@ tmcid number(8),     -- 第几个tmc
 action varchar2(32),
 distance number(8),
 duration number(8),
+speed number(4),
 orientation varchar2(64),
 road varchar2(128),
 status varchar2(32),
@@ -36,6 +37,7 @@ public class GdNavLink_hibernate {
 	private String action;
 	private Long distance;
 	private Long duration;
+	private Long speed;
 	private String orientation;
 	private String road;
 	private String status;
@@ -49,13 +51,14 @@ public class GdNavLink_hibernate {
 	}
 	
 	public GdNavLink_hibernate(String dept, Long tmcid, String action, Long distance,
-			Long duration, String orientation, String road, String status, java.sql.Timestamp insertTime, Geometry polyline) {
+			Long duration, Long speed,String orientation, String road, String status, java.sql.Timestamp insertTime, Geometry polyline) {
 		super();
 		this.dept = dept;
 		this.tmcid = tmcid;
 		this.action = action;
 		this.distance = distance;
 		this.duration = duration;
+		this.speed = speed;
 		this.orientation = orientation;
 		this.road = road;
 		this.status = status;
@@ -112,7 +115,15 @@ public class GdNavLink_hibernate {
 	public void setDuration(Long duration) {
 		this.duration = duration;
 	}
+	
+	public Long getSpeed() {
+		return speed;
+	}
 
+	public void setSpeed(Long speed) {
+		this.speed = speed;
+	}
+	
 	public String getOrientation() {
 		return orientation;
 	}
@@ -153,4 +164,17 @@ public class GdNavLink_hibernate {
 		this.polyline = polyline;
 	}
 
+	@Override
+	public int hashCode() {
+		return polyline.toText().toString().hashCode();
+	}
+	@Override
+	public boolean equals(Object o) {
+		GdNavLink_hibernate p2 = (GdNavLink_hibernate)o;
+		// 判定条件: 1.geom满足equals关系;2.方向相同
+		boolean if_equal = polyline.toText().equals(p2.getPolyline().toText()) &&
+				orientation.equals(p2.getOrientation());
+		return if_equal;
+	}
+	
 }
