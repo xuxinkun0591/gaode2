@@ -52,10 +52,7 @@ insert_time date,
 polyline sdo_geometry
 );
 -- 创建空间索引
-DELETE FROM user_sdo_geom_metadata WHERE TABLE_NAME = UPPER('GD_NAV_TRAFFIC'); --删除注册
-INSERT INTO user_sdo_geom_metadata (TABLE_NAME,COLUMN_NAME,DIMINFO,SRID) VALUES ('GD_NAV_TRAFFIC','POLYLINE',SDO_DIM_ARRAY(SDO_DIM_ELEMENT('X', -180, 180, 0.05),SDO_DIM_ELEMENT('Y', -90, 90, 0.05)),4326) ; --添加注册
-DROP INDEX IDX_GD_NAV_TRAFFIC;  --删除索引
-CREATE INDEX IDX_GD_NAV_TRAFFIC ON GD_NAV_TRAFFIC(POLYLINE) INDEXTYPE IS MDSYS.SPATIAL_INDEX;  --新建索引
+CALL SDOINDEX('GD_NAV_TRAFFIC','polyline',4326);
 
 -------------------------------------------- 执行完以上两部即可运行java runAll方法了-------------------------------------
 -- 首次删除: 重合的线条  简约去重,首尾点相同即认为重复
@@ -91,10 +88,8 @@ P.P1,P.P2     -- 第一个点/第二个点
 FROM GD_NAV_TRAFFIC AA,P
 WHERE AA.SEQ = P.SEQ AND AA.DEPT = 'tmc'
 ;
-DELETE FROM user_sdo_geom_metadata WHERE TABLE_NAME = UPPER('GD_NAV_TRAFFIC_2'); --删除注册
-INSERT INTO user_sdo_geom_metadata (TABLE_NAME,COLUMN_NAME,DIMINFO,SRID) VALUES ('GD_NAV_TRAFFIC_2','POLYLINE',SDO_DIM_ARRAY(SDO_DIM_ELEMENT('X', -180, 180, 0.05),SDO_DIM_ELEMENT('Y', -90, 90, 0.05)),4326) ; --添加注册
-DROP INDEX IDX_GD_NAV_TRAFFIC_2;  --删除索引
-CREATE INDEX IDX_GD_NAV_TRAFFIC_2 ON GD_NAV_TRAFFIC_2(POLYLINE) INDEXTYPE IS MDSYS.SPATIAL_INDEX;  --新建索引
+-- 创建空间索引
+CALL SDOINDEX('GD_NAV_TRAFFIC_2','polyline',4326);
 
 
 															     
